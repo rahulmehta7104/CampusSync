@@ -10,10 +10,19 @@ import notificationRoutes from "./routes/notificationRoutes.js";
 
 const app = express();
 const port = process.env.PORT || 5000;
+const allowedOrigins = (process.env.ALLOWED_ORIGIN || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 app.use(
   cors({
-    origin: process.env.ALLOWED_ORIGIN || "http://localhost:5173"
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    }
   })
 );
 app.use(express.json());

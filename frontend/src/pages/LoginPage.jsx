@@ -6,8 +6,7 @@ export default function LoginPage({ onLogin }) {
   const [form, setForm] = useState({
     name: "",
     email: "",
-    password: "",
-    role: "student"
+    password: ""
   });
   const [error, setError] = useState("");
 
@@ -59,13 +58,7 @@ export default function LoginPage({ onLogin }) {
           onChange={(e) => setForm({ ...form, password: e.target.value })}
           required
         />
-        {isRegister && (
-          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-            <option value="student">Student</option>
-            <option value="mentor">Mentor</option>
-            <option value="admin">Admin</option>
-          </select>
-        )}
+        {isRegister && <p className="login-subtitle">New accounts are created with the student role by default.</p>}
         {error && <p className="error">{error}</p>}
         <button type="submit">{isRegister ? "Create account" : "Login"}</button>
       </form>
