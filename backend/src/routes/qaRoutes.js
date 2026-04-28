@@ -42,10 +42,22 @@ router.post("/", protect, async (req, res) => {
   res.status(201).json(sanitizeQuestion(question.toObject()));
 });
 
-router.post("/:id/answer", protect, authorize("student", "mentor", "admin"), async (req, res) => {
+router.post("/:id/answer", protect, authorize("mentor", "admin"), async (req, res) => {
   const question = await Question.findById(req.params.id);
-  if (!question) return res.status(404).json({ message: "Question not found" });
-  question.answers.push({ body: req.body.body, author: req.user._id });
+
+  if (!question) {
+    return res.status(404).json({ message: "Question not found" });
+  }
+
+  if (!req.body.body || req.body.body.trim() === "") {
+    return res.status(400).json({ message: "Answer cannot be empty" });
+  }
+
+  question.answers.push({
+    body: req.body.body,
+    author: req.user._id
+  });
+
   await question.save();
 
   await Notification.create({

@@ -35,7 +35,7 @@ function StatCard({ label, value, hint, onClick }) {
 
 function QuestionModal({ question, user, onClose, onGoToQA, onAnswer }) {
   const [answerText, setAnswerText] = useState("");
-
+  const [message, setMessage] = useState("");
   useEffect(() => {
     if (!question) return undefined;
     const onKey = (e) => {
@@ -51,12 +51,26 @@ function QuestionModal({ question, user, onClose, onGoToQA, onAnswer }) {
 
   if (!question) return null;
 
-  const canAnswer = Boolean(user && ["student", "mentor", "admin"].includes(user.role));
+  const canAnswer = Boolean(user && ["mentor", "admin"].includes(user.role));
+
 
   const handleAnswerSubmit = async (e) => {
     e.preventDefault();
+
     if (!answerText.trim()) return;
-    await onAnswer(question._id, answerText.trim());
+
+    try {
+      await onAnswer(question._id, answerText.trim());
+
+      setMessage("Answer has been posted ");
+      setAnswerText("");
+    } catch (error) {
+      setMessage("Failed to post answer ");
+    }
+
+    setTimeout(() => {
+      setMessage("");
+    }, 3000);
   };
 
   const answerCount = Array.isArray(question.answers) ? question.answers.length : 0;
@@ -92,9 +106,31 @@ function QuestionModal({ question, user, onClose, onGoToQA, onAnswer }) {
             </ul>
           )}
         </div>
+        {message && (
+          <div
+            style={{
+              position: "fixed",
+              top: "20px",
+              right: "20px",
+              background: message.toLowerCase().includes("fail")
+                ? "#ff4d4f"
+                : "#4caf50",
+              color: "#fff",
+              padding: "12px 18px",
+              borderRadius: "8px",
+              fontWeight: "bold",
+              zIndex: 1000
+            }}
+          >
+            {message}
+          </div>
+        )}
         {canAnswer ? (
           <form className="answer-form" onSubmit={handleAnswerSubmit}>
-            <label htmlFor="answer-body">Write a reply (shown without your name)</label>
+            <label htmlFor="answer-body">
+              Write a reply (shown without your name)
+            </label>
+
             <textarea
               id="answer-body"
               value={answerText}
@@ -103,9 +139,14 @@ function QuestionModal({ question, user, onClose, onGoToQA, onAnswer }) {
               rows={4}
               required
             />
+
             <button type="submit">Post answer</button>
           </form>
-        ) : null}
+        ) : (
+          <p style={{ color: "red", fontWeight: "bold" }}>
+            Only mentors can reply to questions
+          </p>
+        )}
         {onGoToQA ? (
           <div className="modal-actions">
             <button type="button" className="btn-secondary" onClick={onGoToQA}>
@@ -147,6 +188,9 @@ export default function App() {
     events: [],
     notifications: []
   });
+
+  const [joinedTeams, setJoinedTeams] = useState(new Set());
+  const [teams, setTeams] = useState([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
@@ -177,9 +221,31 @@ export default function App() {
         api("/events"),
         api("/notifications")
       ]);
+
       setData({ questions, teams, events, notifications });
+
+      if (user?._id) {
+        const joined = new Set();
+
+        teams.forEach((team) => {
+          if (
+            Array.isArray(team.members) &&
+            team.members.some((m) => {
+              const memberId = typeof m === "object" ? m._id : m;
+              //  Safely grab the ID whether it is labeled 'id' or '_id'
+              const currentUserId = user?.id || user?._id;
+              return memberId?.toString() === currentUserId?.toString();
+            })
+          ) {
+            joined.add(team._id);
+          }
+        });
+
+        setJoinedTeams(joined);
+      }
+
     } catch {
-      // Ignore initial loading errors for modules.
+      // ignore
     } finally {
       setLoading(false);
     }
@@ -232,22 +298,42 @@ export default function App() {
       setField("teamDescription", "");
       setField("teamSkills", "");
       flash("Team created");
-      loadAll();
+
+
+      await loadAll();
     } catch (error) {
       flash(error.message);
     }
   };
-
   const joinTeam = async (teamId) => {
     try {
+      const team = data.teams.find((t) => t._id === teamId);
+
+      if (!team) {
+        flash("Team not found");
+        return;
+      }
+
+      const alreadyJoined = (team.members || []).some((m) => {
+        if (!m) return false;
+        const memberId = typeof m === "object" ? m._id : m;
+        const currentUserId = user?.id || user?._id;
+        return memberId?.toString() === currentUserId?.toString();
+      });
+
+      if (alreadyJoined) {
+        flash("You have already joined this team");
+        return;
+      }
+
       await api(`/squad/teams/${teamId}/join`, { method: "POST" });
       flash("Joined team");
-      loadAll();
+      await loadAll();
+
     } catch (error) {
-      flash(error.message);
+      flash(error.message || "Something went wrong");
     }
   };
-
   const createEvent = async (event) => {
     event.preventDefault();
     try {
@@ -257,7 +343,7 @@ export default function App() {
           title: forms.eventTitle,
           category: forms.eventCategory,
           description: forms.eventDescription,
-          date: forms.eventDate,
+          date: new Date(forms.eventDate).toISOString(),
           totalSeats: Number(forms.eventSeats)
         })
       });
@@ -274,11 +360,37 @@ export default function App() {
 
   const registerEvent = async (eventId) => {
     try {
-      const data = await api(`/events/${eventId}/register`, { method: "POST" });
-      flash(data.message || "Registered for event");
+      const event = data.events.find((e) => e._id === eventId);
+
+      if (!event) {
+        flash("Event not found");
+        return;
+      }
+
+      const currentUserId = user?.id || user?._id;
+      const isOwner = event.createdBy?.toString() === currentUserId?.toString();
+      const isExpired = event.date
+        ? new Date().getTime() > new Date(event.date).getTime()
+        : false;
+
+      if (isOwner) {
+        flash("You cannot register for your own event");
+        return;
+      }
+
+      if (isExpired) {
+        flash("Registration closed");
+        return;
+      }
+
+      const res = await api(`/events/${eventId}/register`, {
+        method: "POST",
+      });
+
+      flash(res.message || "Registered for event");
       loadAll();
     } catch (error) {
-      flash(error.message);
+      flash(error.message || "Something went wrong");
     }
   };
 
@@ -302,19 +414,25 @@ export default function App() {
     api("/auth/me")
       .then((me) => {
         setUser(me);
-        loadAll();
       })
       .catch(() => tokenStore.clear());
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+    loadAll();
+  }, [user]);
+
   const onLogin = (payload) => {
     tokenStore.set(payload.token);
+    setJoinedTeams(new Set());
     setUser(payload.user);
-    loadAll();
+    setActive("Dashboard");
   };
 
   const onLogout = () => {
     tokenStore.clear();
+    setJoinedTeams(new Set());
     setUser(null);
   };
 
@@ -334,14 +452,43 @@ export default function App() {
       flash(error.message);
     }
   };
-
+  console.log("Full User Object:", user);
   if (!user) return <LoginPage onLogin={onLogin} />;
 
   return (
+
     <div className="page">
       <Navbar active={active} setActive={setActive} user={user} onLogout={onLogout} />
+      {notice && (
+        <div
+          style={{
+            position: "fixed",
+            top: "20px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: "600px",
+            maxWidth: "90%",
+            background: notice.toLowerCase().includes("fail")
+              ? "#ff4d4f"
+              : "#4caf50",
+            color: "#fff",
+            padding: "20px 28px",
+            borderRadius: "12px",
+            fontWeight: "600",
+            fontSize: "18px",
+            boxShadow: "0 8px 25px rgba(0,0,0,0.3)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "12px",
+            zIndex: 9999,
+            textAlign: "center"
+          }}
+        >
+          {notice}
+        </div>
+      )}
       <div className="container">
-        {notice ? <div className="notice">{notice}</div> : null}
         {loading && <p className="loading">Loading modules...</p>}
         {active === "Dashboard" && (
           <>
@@ -521,15 +668,27 @@ export default function App() {
                     description="Create your first team and invite classmates to join."
                   />
                 ) : (
-                  data.teams.map((team) => (
-                    <div key={team._id} className="list-item">
-                      <div>
-                        <h4>{team.name}</h4>
-                        <p>{team.description}</p>
+                  data.teams.map((team) => {
+                    console.log("TEAM MEMBERS:", team.members);
+                    console.log("USER:", user._id);
+                    const isMember = joinedTeams.has(team._id);
+
+                    return (
+                      <div key={team._id} className="list-item">
+                        <div>
+                          <h4>{team.name}</h4>
+                          <p>{team.description}</p>
+                        </div>
+
+                        <button
+                          onClick={() => joinTeam(team._id)}
+                          style={isMember ? { opacity: 0.6, cursor: "not-allowed" } : {}}
+                        >
+                          {isMember ? "Already Joined" : "Join"}
+                        </button>
                       </div>
-                      <button onClick={() => joinTeam(team._id)}>Join</button>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </ModuleCard>
@@ -586,6 +745,7 @@ export default function App() {
                 title="Plan your week"
                 description="Explore upcoming events and reserve your seat early."
               />
+
               <div className="list">
                 {data.events.length === 0 ? (
                   <EmptyState
@@ -594,18 +754,57 @@ export default function App() {
                     description="Publish an event to help students discover opportunities."
                   />
                 ) : (
-                  data.events.map((event) => (
-                    <div key={event._id} className="list-item">
-                      <div>
-                        <h4>{event.title}</h4>
-                        <p>{event.category}</p>
-                        <small>
-                          Seats left: <strong>{event.availableSeats}</strong>
-                        </small>
+                  data.events.map((event) => {
+                    const isExpired = new Date() > new Date(event.date);
+
+                    return (
+                      <div key={event._id} className="list-item">
+                        <div style={{ maxWidth: "70%" }}>
+                          <h4 style={{ marginBottom: "4px" }}>{event.title}</h4>
+
+                          <p style={{ margin: "2px 0", color: "#666" }}>
+                            {event.category}
+                          </p>
+
+                          <p
+                            style={{
+                              margin: "6px 0",
+                              color: "#444",
+                              lineHeight: "1.6",
+                              fontSize: "14px",
+                            }}
+                            dangerouslySetInnerHTML={{
+                              __html: event.description
+                                ? event.description
+                                  .slice(0, 10000)
+                                  .replace(/\n/g, "<br/>")
+                                : "No description available",
+                            }}
+                          ></p>
+
+                          <p style={{ margin: "4px 0", fontSize: "13px", color: "#888" }}>
+                            🕒{" "}
+                            {event.date
+                              ? new Date(event.date).toLocaleString("en-IN", {
+                                timeZone: "Asia/Kolkata"
+                              })
+                              : "Last date not specified"}
+                          </p>
+
+                          <small>
+                            Seats left: <strong>{event.availableSeats}</strong>
+                          </small>
+                        </div>
+
+                        <button
+                          onClick={() => registerEvent(event._id)}
+                          disabled={isExpired}
+                        >
+                          {isExpired ? "Registration Closed" : "Register"}
+                        </button>
                       </div>
-                      <button onClick={() => registerEvent(event._id)}>Register</button>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </ModuleCard>

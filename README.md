@@ -53,8 +53,8 @@ CampusSync/
 ### 1. Clone and open the project
 
 ```bash
-git clone <your-repo-url>
-cd CampusSync
+git clone https://github.com/pragatinautiyal/Campus_sync_fullstack.git
+cd Campus_sync_fullstack
 ```
 
 ### 2. Configure the backend
